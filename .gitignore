@@ -1,0 +1,54 @@
+# =========================
+# OS & IDE
+# =========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# =========================
+# .NET / C#
+# =========================
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.log
+logs/
+*.pdb
+
+# SQLite / EF artifacts
+*.db
+*.db-shm
+*.db-wal
+backend/src/AiSpeaker.Api/app_data/
+
+# =========================
+# Flutter / Dart
+# =========================
+.dart_tool/
+.packages
+.pub/
+.pub-cache/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Android
+app/ai_speaker_client/android/.gradle/
+app/ai_speaker_client/android/app/build/
+app/ai_speaker_client/android/local.properties
+
+# iOS
+app/ai_speaker_client/ios/Pods/
+app/ai_speaker_client/ios/Runner.xcworkspace/
+
+# =========================
+# Misc
+# =========================
+*.tmp
+*.swp
+*.lock
+
+# Note: keep source, docs, and configuration templates tracked.
