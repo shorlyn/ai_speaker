@@ -37,8 +37,9 @@ dependencies:
   http: ^1.2.1
   http_parser: ^4.0.2
   shared_preferences: ^2.2.2
-  record: ^5.0.5
+  record: 4.4.4
   path_provider: ^2.1.2
+  audioplayers: ^5.2.1
 
 dev_dependencies:
   flutter_test:

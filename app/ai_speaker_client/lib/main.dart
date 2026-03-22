@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
@@ -21,7 +24,7 @@ class AiSpeakerApp extends StatefulWidget {
 
 class _AiSpeakerAppState extends State<AiSpeakerApp> {
   final TextEditingController _baseUrlController =
-      TextEditingController(text: 'http://localhost:5224');
+      TextEditingController(text: 'http://192.168.10.15:5224');
   final TextEditingController _deviceCodeController =
       TextEditingController(text: 'dev-001');
   final TextEditingController _deviceNameController =
@@ -33,15 +36,17 @@ class _AiSpeakerAppState extends State<AiSpeakerApp> {
   String? _registerStatus;
   String? _textChatStatus;
   String? _audioChatStatus;
+  String? _ttsStatus;
   bool _isRegistering = false;
   bool _isHealthChecking = false;
   bool _isSendingText = false;
   bool _isRecording = false;
   bool _isUploadingAudio = false;
+  bool _isSynthesizingTts = false;
   String? _lastAssistantText;
-  String? _lastAudioUrl;
 
-  final AudioRecorder _recorder = AudioRecorder();
+  final Record _recorder = Record();
+  final AudioPlayer _audioPlayer = AudioPlayer();
   String? _recordFilePath;
 
   @override
@@ -185,13 +190,13 @@ class _AiSpeakerAppState extends State<AiSpeakerApp> {
         final body = jsonDecode(response.body) as Map<String, dynamic>;
         _sessionId = body['sessionId'] as String?;
         _lastAssistantText = body['assistantText'] as String?;
-        _lastAudioUrl = body['audioUrl'] as String?;
         await _savePrefs();
         var prompt = 'sessionId=$_sessionId';
         if (_lastAssistantText == '[ollama-error]') {
           prompt += '，服务暂不可用';
         }
         setState(() => _textChatStatus = prompt);
+        unawaited(_playAssistantTts(_lastAssistantText));
       } else {
         setState(() =>
             _textChatStatus = '对话失败：HTTP ${response.statusCode}');
@@ -216,13 +221,13 @@ class _AiSpeakerAppState extends State<AiSpeakerApp> {
     final dir = await getTemporaryDirectory();
     final path =
         '${dir.path}/audio-${DateTime.now().millisecondsSinceEpoch}.wav';
-    const config = RecordConfig(
+    await _recorder.start(
+      path: path,
       encoder: AudioEncoder.wav,
-      sampleRate: 16000,
       bitRate: 128000,
+      samplingRate: 16000,
       numChannels: 1,
     );
-    await _recorder.start(config, path: path);
     setState(() {
       _isRecording = true;
       _audioChatStatus = '录音中...';
@@ -277,13 +282,13 @@ class _AiSpeakerAppState extends State<AiSpeakerApp> {
         final body = jsonDecode(response.body) as Map<String, dynamic>;
         _sessionId = body['sessionId'] as String?;
         _lastAssistantText = body['assistantText'] as String?;
-        _lastAudioUrl = body['audioUrl'] as String?;
         await _savePrefs();
         var prompt = '语音成功，sessionId=$_sessionId';
         if (_lastAssistantText == '[ollama-error]') {
           prompt += '，服务暂不可用';
         }
         setState(() => _audioChatStatus = prompt);
+        unawaited(_playAssistantTts(_lastAssistantText));
       } else {
         setState(() =>
             _audioChatStatus = '上传失败：HTTP ${response.statusCode}');
@@ -292,6 +297,61 @@ class _AiSpeakerAppState extends State<AiSpeakerApp> {
       setState(() => _audioChatStatus = '上传失败：$e');
     } finally {
       setState(() => _isUploadingAudio = false);
+    }
+  }
+
+  Future<void> _playAssistantTts(String? assistantText) async {
+    if (_isSynthesizingTts) {
+      return;
+    }
+    final text = assistantText?.trim();
+    if (text == null || text.isEmpty || text == '[ollama-error]') {
+      setState(() {
+        if (assistantText == '[ollama-error]') {
+          _ttsStatus = '语音合成失败，文本已显示';
+        }
+      });
+      return;
+    }
+
+    final uri = _buildUri('/api/tts/speak');
+    if (uri == null) {
+      setState(() => _ttsStatus = '语音合成失败，文本已显示');
+      return;
+    }
+
+    setState(() {
+      _isSynthesizingTts = true;
+      _ttsStatus = '语音合成中...';
+    });
+
+    try {
+      final response = await http
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'text': text}),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final contentType = response.headers['content-type'] ?? 'audio/wav';
+        final ext = contentType.contains('mpeg') ? 'mp3' : 'wav';
+        final dir = await getTemporaryDirectory();
+        final filePath =
+            '${dir.path}/tts-${DateTime.now().millisecondsSinceEpoch}.$ext';
+        final file = File(filePath);
+        await file.writeAsBytes(response.bodyBytes);
+        await _audioPlayer.stop();
+        await _audioPlayer.play(DeviceFileSource(file.path));
+        setState(() => _ttsStatus = '语音播放完成');
+      } else {
+        setState(() => _ttsStatus = '语音合成失败，文本已显示');
+      }
+    } catch (e) {
+      setState(() => _ttsStatus = '语音合成失败，文本已显示');
+    } finally {
+      setState(() => _isSynthesizingTts = false);
     }
   }
 
@@ -423,10 +483,10 @@ class _AiSpeakerAppState extends State<AiSpeakerApp> {
               padding: const EdgeInsets.only(top: 8),
               child: Text('assistantText：$_lastAssistantText'),
             ),
-          if (_lastAudioUrl != null)
+          if (_ttsStatus != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
-              child: Text('audioUrl：$_lastAudioUrl'),
+              child: Text('TTS：$_ttsStatus'),
             ),
         ],
       ),
@@ -468,10 +528,10 @@ class _AiSpeakerAppState extends State<AiSpeakerApp> {
               padding: const EdgeInsets.only(top: 8),
               child: Text('assistantText：$_lastAssistantText'),
             ),
-          if (_lastAudioUrl != null)
+          if (_ttsStatus != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
-              child: Text('audioUrl：$_lastAudioUrl'),
+              child: Text('TTS：$_ttsStatus'),
             ),
         ],
       ),
@@ -485,6 +545,7 @@ class _AiSpeakerAppState extends State<AiSpeakerApp> {
     _deviceNameController.dispose();
     _userTextController.dispose();
     _recorder.dispose();
+    _audioPlayer.dispose();
     super.dispose();
   }
 }
